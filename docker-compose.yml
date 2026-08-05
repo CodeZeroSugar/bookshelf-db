@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:18
+    container_name: bookshelf-db
+    environment:
+      POSTGRES_USER: bookshelf
+      POSTGRES_PASSWORD: bookshelf
+      POSTGRES_DB: bookshelf
+    ports:
+      - "5432:5432"
+    volumes:
+      -       bookshelf_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookshelf -d bookshelf"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  bookshelf_pgdata:
