@@ -1,10 +1,11 @@
 BIN      := bookshelf
 SEED     := data/books.json
 DB_URL   ?= postgres://bookshelf:bookshelf@localhost:5432/bookshelf
+BACKUP_DIR := backups
 
 .DEFAULT_GOAL := help
 .PHONY: help db-up db-down db-logs db-reset build test vet fmt clean all \
-        init seed run setup
+        init seed run setup migrate migrate-status backup
 
 help: ## Show available targets
 	@echo "bookshelf-db targets:"
@@ -48,8 +49,20 @@ clean: ## Remove the built binary
 
 all: vet test build ## Vet, test, and build
 
-init: build ## Create tables (idempotent)
+init: build ## Apply all migrations (idempotent)
 	DATABASE_URL=$(DB_URL) ./$(BIN) init
+
+migrate: build ## Apply pending migrations (additive-only guard)
+	DATABASE_URL=$(DB_URL) ./$(BIN) migrate up
+
+migrate-status: build ## Show applied vs pending migrations
+	DATABASE_URL=$(DB_URL) ./$(BIN) migrate status
+
+backup: ## Dump the database to backups/ (restore with: psql -f backups/<file>)
+	@mkdir -p $(BACKUP_DIR)
+	@stamp=$$(date +%Y%m%d_%H%M%S); \
+	docker compose exec -T db pg_dump -U bookshelf -d bookshelf > $(BACKUP_DIR)/bookshelf_$$stamp.sql; \
+	echo "backed up to $(BACKUP_DIR)/bookshelf_$$stamp.sql"
 
 seed: build ## Load the sample check list (data/books.json)
 	DATABASE_URL=$(DB_URL) ./$(BIN) import-check $(SEED)

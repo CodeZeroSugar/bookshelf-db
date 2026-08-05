@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"bookshelf-db/internal/cli"
 	"bookshelf-db/internal/db"
 	"bookshelf-db/internal/export"
@@ -40,11 +42,29 @@ func runREPL(ctx context.Context) {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	if err := db.Migrate(ctx, pool); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
+	warnPendingMigrations(ctx, pool)
 	cli.NewApp(store.New(pool)).Run()
+}
+
+// warnPendingMigrations alerts the user when the database schema is behind the
+// binary but never applies migrations implicitly.
+func warnPendingMigrations(ctx context.Context, pool *pgxpool.Pool) {
+	mig, err := db.NewMigrator(ctx, pool)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: cannot check migration status:", err)
+		return
+	}
+	defer mig.Close()
+	pending, err := mig.HasPending(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: cannot check migration status:", err)
+		return
+	}
+	if pending {
+		fmt.Fprintln(os.Stderr,
+			"warning: database schema has pending migrations (schema changed since your last setup).\n"+
+				"         run 'bookshelf migrate up' or 'make migrate' to apply them.")
+	}
 }
 
 func runOneOff(ctx context.Context, args []string) error {
@@ -56,11 +76,21 @@ func runOneOff(ctx context.Context, args []string) error {
 
 	switch args[0] {
 	case "init":
-		if err := db.Migrate(ctx, pool); err != nil {
-			return err
+		return cmdMigrateUp(ctx, pool, false)
+
+	case "migrate":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: bookshelf migrate up | status")
 		}
-		fmt.Println("schema ready (check_against, user_library, matches)")
-		return nil
+		switch args[1] {
+		case "up":
+			force := len(args) > 2 && args[2] == "--force"
+			return cmdMigrateUp(ctx, pool, force)
+		case "status":
+			return cmdMigrateStatus(ctx, pool)
+		default:
+			return fmt.Errorf("usage: bookshelf migrate up | status")
+		}
 
 	case "import-check":
 		if len(args) < 2 {
@@ -154,8 +184,62 @@ func runOneOff(ctx context.Context, args []string) error {
 		return nil
 
 	default:
-		return fmt.Errorf("unknown subcommand %q\n\nuse one of: init, import-check, import-library, query-check, query-library, export-missing, export-check, export-library, or run bare 'bookshelf' for the interactive shell", args[0])
+		return fmt.Errorf("unknown subcommand %q\n\nuse one of: init, migrate, import-check, import-library, query-check, query-library, export-missing, export-check, export-library, or run bare 'bookshelf' for the interactive shell", args[0])
 	}
+}
+
+func cmdMigrateUp(ctx context.Context, pool *pgxpool.Pool, force bool) error {
+	mig, err := db.NewMigrator(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer mig.Close()
+	versions, err := mig.Up(ctx, force)
+	if err != nil {
+		return err
+	}
+	if len(versions) == 0 {
+		fmt.Println("database schema is up to date")
+		return nil
+	}
+	statuses, err := mig.Status(ctx)
+	if err != nil {
+		return err
+	}
+	applied := map[int64]string{}
+	for _, s := range statuses {
+		if !s.Pending {
+			applied[s.Version] = s.File
+		}
+	}
+	for _, v := range versions {
+		fmt.Printf("applied %s\n", applied[v])
+	}
+	return nil
+}
+
+func cmdMigrateStatus(ctx context.Context, pool *pgxpool.Pool) error {
+	mig, err := db.NewMigrator(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer mig.Close()
+	statuses, err := mig.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if len(statuses) == 0 {
+		fmt.Println("no migrations found")
+		return nil
+	}
+	for _, s := range statuses {
+		state := "pending"
+		if !s.Pending {
+			state = "applied " + s.AppliedAt.Format("2006-01-02 15:04:05")
+		}
+		fmt.Printf("%-40s %s\n", s.File, state)
+	}
+	return nil
 }
 
 func usage() {
@@ -163,7 +247,9 @@ func usage() {
 
 usage:
   bookshelf                    interactive shell
-  bookshelf init               create tables (idempotent)
+  bookshelf init               apply all migrations (idempotent)
+  bookshelf migrate up         apply pending migrations (additive-only guard)
+  bookshelf migrate status     show applied vs pending migrations
   bookshelf import-check F     add books from a .json file to check-against list
   bookshelf import-library F   add books from a .json file to your library
   bookshelf query-check T      look up a title in the check-against list

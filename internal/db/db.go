@@ -2,16 +2,12 @@ package db
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-//go:embed schema.sql
-var schemaSQL string
 
 func DefaultURL() string {
 	if v := os.Getenv("DATABASE_URL"); v != "" {
@@ -36,12 +32,4 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("ping %s: %w", DefaultURL(), err)
 	}
 	return pool, nil
-}
-
-// Migrate applies schema.sql. Safe to run repeatedly.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
-	}
-	return nil
 }

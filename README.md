@@ -88,7 +88,9 @@ Pumphrey`. Without a pipe the author is left empty.
 `bookshelf` also accepts subcommands for scripting:
 
 ```
-bookshelf init                       create tables (idempotent)
+bookshelf init                       apply all migrations (idempotent)
+bookshelf migrate up                 apply pending migrations
+bookshelf migrate status             show applied vs pending migrations
 bookshelf import-check <file.json>   load a check-against file
 bookshelf import-library <file.json> load library books from a file
 bookshelf query-check <title>        look up a title
@@ -100,6 +102,34 @@ bookshelf export-library <fmt> [file] export your library
 
 For exports, `fmt` is `text`, `json`, or `csv`. With a file argument the list
 is written to the file; without one it prints to stdout.
+
+## Upgrading
+
+Your data lives in the Postgres Docker volume, so updating the application
+code never touches it. Schema changes are handled by versioned migrations
+(tracked in the `goose_db_version` table), applied forward-only and in order.
+Upgrading is:
+
+```sh
+git pull
+make build
+make backup                 # optional but recommended safety net
+make migrate                # apply any new schema migrations
+make run
+```
+
+Migrations never run automatically. The interactive shell only warns you when
+the database is behind the binary:
+
+```
+warning: database schema has pending migrations (schema changed since your last setup).
+         run 'bookshelf migrate up' or 'make migrate' to apply them.
+```
+
+New migrations must be additive-only (new tables/columns/indexes). A migration
+containing destructive statements (`DROP`, `TRUNCATE`, `DELETE FROM`) is
+refused unless you explicitly run `bookshelf migrate up --force`. To restore a
+backup: `psql -f backups/bookshelf_<timestamp>.sql`.
 
 ## JSON input format
 
@@ -132,10 +162,13 @@ bookshelf import-check catalog.json
 ## Development
 
 ```sh
-make all      # vet + test + build
-make test     # run unit tests
-make fmt      # check formatting
-make db-reset # wipe the postgres data volume for a clean slate
+make all        # vet + test + build
+make test       # run unit tests
+make fmt        # check formatting
+make migrate    # apply pending migrations
+make migrate-status # show applied vs pending migrations
+make backup     # pg_dump to backups/
+make db-reset   # wipe the postgres data volume for a clean slate
 ```
 
 ## Project layout
@@ -145,7 +178,7 @@ main.go              subcommand dispatch + entry point
 Makefile             build/setup/run targets
 docker-compose.yml   local Postgres
 internal/models/     Book struct + strict JSON parsing
-internal/db/         connection + schema (embedded)
+internal/db/         connection + versioned migrations (embedded SQL)
 internal/store/      all database operations
 internal/match/      title normalization
 internal/export/     text/json/csv writers

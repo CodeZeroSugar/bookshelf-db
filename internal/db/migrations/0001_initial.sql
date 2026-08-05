@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS check_against (
@@ -28,3 +29,8 @@ CREATE INDEX IF NOT EXISTS idx_check_against_title_trgm ON check_against USING g
 CREATE INDEX IF NOT EXISTS idx_user_library_title_trgm ON user_library USING gin (normalized_title gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_matches_library ON matches(library_book_id);
 CREATE INDEX IF NOT EXISTS idx_matches_check ON matches(check_book_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS matches;
+DROP TABLE IF EXISTS user_library;
+DROP TABLE IF EXISTS check_against;
