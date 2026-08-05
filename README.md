@@ -29,7 +29,7 @@ is created automatically.
 ## Quickstart
 
 ```sh
-git clone <your-clone-url> && cd bookshelf-db
+git clone  https://github.com/CodeZeroSugar/bookshelf-db && cd bookshelf-db
 make setup        # starts Postgres, builds, creates tables, asks about sample data
 make run          # start the interactive shell
 ```
