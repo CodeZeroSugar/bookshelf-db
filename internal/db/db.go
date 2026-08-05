@@ -17,7 +17,11 @@ func DefaultURL() string {
 }
 
 func Connect(ctx context.Context) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(DefaultURL())
+	return connectURL(ctx, DefaultURL())
+}
+
+func connectURL(ctx context.Context, url string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
 	}
@@ -29,7 +33,7 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("ping %s: %w", DefaultURL(), err)
+		return nil, fmt.Errorf("ping %s: %w", url, err)
 	}
 	return pool, nil
 }

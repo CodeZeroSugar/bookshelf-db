@@ -63,7 +63,7 @@ func warnPendingMigrations(ctx context.Context, pool *pgxpool.Pool) {
 	if pending {
 		fmt.Fprintln(os.Stderr,
 			"warning: database schema has pending migrations (schema changed since your last setup).\n"+
-				"         run 'bookshelf migrate up' or 'make migrate' to apply them.")
+				"         run 'bookshelf migrate up' to apply them (see make migrate / make migrate-prod).")
 	}
 }
 

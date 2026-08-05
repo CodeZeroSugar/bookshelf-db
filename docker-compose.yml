@@ -9,12 +9,31 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      -       bookshelf_pgdata:/var/lib/postgresql
+      - bookshelf_pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bookshelf -d bookshelf"]
       interval: 2s
       timeout: 3s
       retries: 15
 
+  db-dev:
+    image: postgres:18
+    container_name: bookshelf-db-dev
+    environment:
+      POSTGRES_USER: bookshelf
+      POSTGRES_PASSWORD: bookshelf
+      POSTGRES_DB: bookshelf_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - bookshelf_pgdata_dev:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookshelf -d bookshelf_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
 volumes:
   bookshelf_pgdata:
+  bookshelf_pgdata_dev:
+    name: bookshelf_pgdata_dev

@@ -13,12 +13,35 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// newTestDB creates a throwaway database and returns a pool to it. Skips the
-// test when postgres is not reachable.
+// newTestDB creates a throwaway database on the dedicated dev/test postgres
+// and returns a pool to it. It skips the test when postgres is not reachable,
+// refuses non-localhost targets, and refuses to run against the application's
+// production database (DATABASE_URL).
 func newTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
-	admin, err := Connect(ctx)
+
+	testURL := os.Getenv("BOOKSHELF_TEST_URL")
+	if testURL == "" {
+		testURL = os.Getenv("BOOKSHELF_DEV_URL")
+	}
+	if testURL == "" {
+		testURL = "postgres://bookshelf:bookshelf@localhost:5433/bookshelf_dev"
+	}
+
+	cfg, err := pgxpool.ParseConfig(testURL)
+	if err != nil {
+		t.Skipf("cannot parse test database url, skipping: %v", err)
+	}
+	host := cfg.ConnConfig.Host
+	if !isLoopback(host) {
+		t.Skipf("refusing to run integration tests against non-localhost host %q", host)
+	}
+	if sameTarget(testURL, DefaultURL()) {
+		t.Skip("refusing to run integration tests against the application database (DATABASE_URL)")
+	}
+
+	admin, err := connectURL(ctx, testURL)
 	if err != nil {
 		t.Skipf("postgres not available, skipping integration test: %v", err)
 	}
@@ -26,10 +49,6 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		admin.Close()
 		t.Fatalf("create test database: %v", err)
-	}
-	cfg, err := pgxpool.ParseConfig(DefaultURL())
-	if err != nil {
-		t.Fatal(err)
 	}
 	cfg.ConnConfig.Database = name
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -42,6 +61,50 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 		admin.Close()
 	})
 	return pool
+}
+
+// sameTarget reports whether two URLs point at the same host, port, and
+// database.
+func sameTarget(a, b string) bool {
+	ca, errA := pgxpool.ParseConfig(a)
+	cb, errB := pgxpool.ParseConfig(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return ca.ConnConfig.Host == cb.ConnConfig.Host &&
+		ca.ConnConfig.Port == cb.ConnConfig.Port &&
+		ca.ConnConfig.Database == cb.ConnConfig.Database
+}
+
+func isLoopback(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func TestSameTarget(t *testing.T) {
+	prod := "postgres://bookshelf:bookshelf@localhost:5432/bookshelf"
+	dev := "postgres://bookshelf:bookshelf@localhost:5433/bookshelf_dev"
+	if !sameTarget(prod, prod) {
+		t.Error("same URL should be same target")
+	}
+	if sameTarget(prod, dev) {
+		t.Error("prod and dev should differ")
+	}
+	if sameTarget(prod, "postgres://bookshelf:bookshelf@localhost:5432/other") {
+		t.Error("same host/port but different database should differ")
+	}
+}
+
+func TestIsLoopback(t *testing.T) {
+	for _, ok := range []string{"localhost", "127.0.0.1", "::1"} {
+		if !isLoopback(ok) {
+			t.Errorf("expected %q to be loopback", ok)
+		}
+	}
+	for _, no := range []string{"db.example.com", "10.0.0.1", ""} {
+		if isLoopback(no) {
+			t.Errorf("expected %q to NOT be loopback", no)
+		}
+	}
 }
 
 func TestMigrateFreshAndIdempotent(t *testing.T) {

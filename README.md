@@ -30,13 +30,14 @@ is created automatically.
 
 ```sh
 git clone  https://github.com/CodeZeroSugar/bookshelf-db && cd bookshelf-db
-make setup        # starts Postgres, builds, creates tables, asks about sample data
-make run          # start the interactive shell
+make setup        # starts both Postgres (prod + dev), builds, migrates, asks about sample data
+make run          # start the interactive shell (against production)
 ```
 
 `make setup` will ask whether to seed the sample check list from
-`data/books.json` (42 books). Say `y` to try the app with sample data, or `n`
-to start empty — you can always load it later with `make seed`.
+`data/books.json` (42 books) into the production database. Say `y` to try the
+app with sample data, or `n` to start empty — you can always load it later
+with `make seed`.
 
 ## Configuration
 
@@ -52,6 +53,49 @@ to change nothing. To point at a different database:
 ```sh
 DATABASE_URL=postgres://user:pass@host:5432/dbname ./bookshelf
 ```
+
+Copy `.env.example` to `.env` to set `DATABASE_URL` and `BOOKSHELF_DEV_URL`
+persistently; the Makefile picks the file up automatically.
+
+## Protecting your data (dev vs prod)
+
+The repository runs **two separate Postgres instances**:
+
+- **Production** (`db`, port `5432`, database `bookshelf`) — your real data.
+  The app defaults to this for day-to-day use (`make run`, imports, queries,
+  seeds, backups).
+- **Development** (`db-dev`, port `5433`, database `bookshelf_dev`, its own
+  volume) — used only by development tooling.
+
+| Command                | Target | Notes                                        |
+| ---------------------- | ------ | -------------------------------------------- |
+| `make run`             | prod   | interactive shell                            |
+| `make seed`            | prod   | loads sample check list                      |
+| `make backup`          | prod   | pg_dump to `backups/`                        |
+| `make migrate-prod`    | prod   | **backs up, then requires typing `yes`**     |
+| `make setup`           | both   | migrates dev + prod, prompts to seed prod    |
+| `make migrate` / `init`| dev    | migrations apply to dev only                 |
+| `make migrate-status`  | dev    |                                              |
+| `make test`            | dev    | throwaway databases on dev                  |
+| `make run-dev`         | dev    | interactive shell against dev               |
+| `make db-reset`        | both   | **requires typing `db-reset` to confirm**    |
+| `make db-dev-reset`    | dev    | wipes dev volume, no confirmation            |
+
+Safety rules that keep your production data intact:
+
+- **Tests never touch production.** Integration tests connect to
+  `BOOKSHELF_TEST_URL` (defaults to the dev database), only run against
+  localhost hosts, and refuse to run if the target equals `DATABASE_URL`.
+  They create and drop throwaway `bookshelf_mig_*` databases on dev.
+- **Migrations apply to dev by default.** Applying a schema change to
+  production is a deliberate, confirmed step: `make migrate-prod` runs a
+  backup first and requires you to type `yes`, and the additive-only guard
+  refuses destructive SQL (`DROP`/`TRUNCATE`/`DELETE FROM`) unless you pass
+  `--force`.
+- **`make db-reset` will not run silently.** It deletes **all** data in both
+  volumes and requires you to type `db-reset` to confirm.
+- **Back up before changing production schema**: `make backup` then
+  `make migrate-prod`.
 
 ## Usage
 
@@ -105,25 +149,28 @@ is written to the file; without one it prints to stdout.
 
 ## Upgrading
 
-Your data lives in the Postgres Docker volume, so updating the application
-code never touches it. Schema changes are handled by versioned migrations
-(tracked in the `goose_db_version` table), applied forward-only and in order.
-Upgrading is:
+Your data lives in the production Postgres Docker volume, so updating the
+application code never touches it. Schema changes are handled by versioned
+migrations (tracked in the `goose_db_version` table), applied forward-only and
+in order. Upgrading production is:
 
 ```sh
 git pull
 make build
-make backup                 # optional but recommended safety net
-make migrate                # apply any new schema migrations
+make backup                # optional but recommended safety net
+make migrate-prod          # backs up again, then requires you to type 'yes'
 make run
 ```
+
+You can preview a change against the dev database first with `make migrate`,
+which never touches production.
 
 Migrations never run automatically. The interactive shell only warns you when
 the database is behind the binary:
 
 ```
 warning: database schema has pending migrations (schema changed since your last setup).
-         run 'bookshelf migrate up' or 'make migrate' to apply them.
+         run 'bookshelf migrate up' to apply them (see make migrate / make migrate-prod).
 ```
 
 New migrations must be additive-only (new tables/columns/indexes). A migration
@@ -162,21 +209,28 @@ bookshelf import-check catalog.json
 ## Development
 
 ```sh
-make all        # vet + test + build
-make test       # run unit tests
-make fmt        # check formatting
-make migrate    # apply pending migrations
-make migrate-status # show applied vs pending migrations
-make backup     # pg_dump to backups/
-make db-reset   # wipe the postgres data volume for a clean slate
+make all             # vet + test + build
+make test            # run unit tests (integration tests use throwaway DBs on dev)
+make fmt             # check formatting
+make db-up           # start both postgres containers (prod 5432, dev 5433)
+make migrate         # apply pending migrations to the DEV database
+make migrate-status  # show applied vs pending migrations (dev)
+make migrate-prod    # backup + apply migrations to production (requires confirmation)
+make backup          # pg_dump production to backups/
+make db-dev-reset    # wipe only the dev volume (safe)
+make db-reset        # wipe both volumes (requires typing 'db-reset' to confirm)
 ```
+
+Note: integration tests require the dev database to be running (`make db-up`);
+they skip silently if it is unreachable.
 
 ## Project layout
 
 ```
 main.go              subcommand dispatch + entry point
-Makefile             build/setup/run targets
-docker-compose.yml   local Postgres
+Makefile             build/setup/run targets (dev/prod split)
+docker-compose.yml   two Postgres instances: db (prod 5432), db-dev (5433)
+.env.example         documents DATABASE_URL and BOOKSHELF_DEV_URL
 internal/models/     Book struct + strict JSON parsing
 internal/db/         connection + versioned migrations (embedded SQL)
 internal/store/      all database operations
